@@ -14,6 +14,9 @@ are hard-coded anywhere.
 
 ## Quick start
 
+Requires **Node 22.6 or newer** (Next.js itself needs 20.9+; the test runner
+uses native TypeScript type stripping, which landed in 22.6).
+
 ```bash
 npm install
 npm run dev          # http://localhost:3000
@@ -28,7 +31,7 @@ npm run build && npm start     # production
 | `npm run dev` | Development server |
 | `npm run build` / `npm start` | Production build and server |
 | `npm run typecheck` | `tsc --noEmit` |
-| `npm run lint` | ESLint (flat config) |
+| `npm run lint` | ESLint (flat config); `npm run lint:fix` to autofix |
 | `npm test` | 45 unit + end-to-end tests against a local fixture site |
 | `npm run test:browser` | Browser walkthrough (needs a running server — see below) |
 
