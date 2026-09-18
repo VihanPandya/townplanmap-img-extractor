@@ -1,0 +1,251 @@
+@import 'tailwindcss';
+
+/*
+ * Dark mode is driven by an explicit attribute on <html> so the user's choice
+ * always wins over the OS preference. The inline script in layout.tsx sets it
+ * before first paint, which avoids a flash of the wrong theme.
+ */
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+@theme {
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
+    Arial, 'Noto Sans', sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+
+  --color-accent-50: #eef2ff;
+  --color-accent-100: #e0e7ff;
+  --color-accent-200: #c7d2fe;
+  --color-accent-300: #a5b4fc;
+  --color-accent-400: #818cf8;
+  --color-accent-500: #6366f1;
+  --color-accent-600: #4f46e5;
+  --color-accent-700: #4338ca;
+  --color-accent-900: #312e81;
+
+  --radius-card: 0.875rem;
+}
+
+/*
+ * Semantic surface tokens. Every component reads these rather than hard-coded
+ * greys, so the two themes stay in step.
+ */
+:root {
+  --canvas: #f7f7f9;
+  --canvas-subtle: #eff0f4;
+  --panel: #ffffff;
+  --panel-raised: #ffffff;
+  --panel-inset: #f4f5f8;
+  --border: #e3e5ea;
+  --border-strong: #cfd2da;
+  --text: #16171c;
+  --text-muted: #5f6472;
+  --text-faint: #8a8f9d;
+  --accent: #4f46e5;
+  --accent-contrast: #ffffff;
+  --accent-soft: #eef0ff;
+  --positive: #15803d;
+  --positive-soft: #e7f7ec;
+  --warning: #b45309;
+  --warning-soft: #fdf3e3;
+  --danger: #b91c1c;
+  --danger-soft: #fdecec;
+  --shadow-card: 0 1px 2px rgb(16 18 27 / 0.05), 0 4px 16px -8px rgb(16 18 27 / 0.12);
+  --shadow-float: 0 12px 40px -12px rgb(16 18 27 / 0.28);
+  --checker-a: #f2f3f6;
+  --checker-b: #e7e9ee;
+
+  color-scheme: light;
+}
+
+[data-theme='dark'] {
+  --canvas: #08090c;
+  --canvas-subtle: #0d0f14;
+  --panel: #111318;
+  --panel-raised: #171a21;
+  --panel-inset: #0c0e13;
+  --border: #23262f;
+  --border-strong: #333845;
+  --text: #edeef2;
+  --text-muted: #9aa0b0;
+  --text-faint: #6d7383;
+  --accent: #818cf8;
+  --accent-contrast: #0b0c10;
+  --accent-soft: #1b1d33;
+  --positive: #4ade80;
+  --positive-soft: #10231a;
+  --warning: #fbbf24;
+  --warning-soft: #2a2011;
+  --danger: #f87171;
+  --danger-soft: #2b1416;
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 24px -12px rgb(0 0 0 / 0.6);
+  --shadow-float: 0 20px 60px -20px rgb(0 0 0 / 0.8);
+  --checker-a: #14161c;
+  --checker-b: #0e1015;
+
+  color-scheme: dark;
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--canvas);
+    color: var(--text);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background: var(--accent);
+    color: var(--accent-contrast);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  input,
+  select,
+  textarea,
+  button {
+    font: inherit;
+    color: inherit;
+  }
+
+  /* A restrained scrollbar that matches both themes. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border-radius: 999px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+@layer components {
+  .surface {
+    background-color: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+  }
+
+  .surface-raised {
+    background-color: var(--panel-raised);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-card);
+  }
+
+  .muted {
+    color: var(--text-muted);
+  }
+
+  .faint {
+    color: var(--text-faint);
+  }
+
+  /* Transparency checkerboard behind PNG/SVG previews. */
+  .checkerboard {
+    background-color: var(--checker-a);
+    background-image:
+      linear-gradient(45deg, var(--checker-b) 25%, transparent 25%),
+      linear-gradient(-45deg, var(--checker-b) 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, var(--checker-b) 75%),
+      linear-gradient(-45deg, transparent 75%, var(--checker-b) 75%);
+    background-size: 16px 16px;
+    background-position:
+      0 0,
+      0 8px,
+      8px -8px,
+      -8px 0;
+  }
+
+  .focus-ring {
+    outline: 2px solid transparent;
+    outline-offset: 2px;
+    transition: box-shadow 120ms ease;
+  }
+
+  .skeleton {
+    background: linear-gradient(
+      90deg,
+      var(--panel-inset) 0%,
+      var(--canvas-subtle) 50%,
+      var(--panel-inset) 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.4s ease-in-out infinite;
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-up {
+  animation: fade-up 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--accent) 45%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 8px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+.animate-pulse-ring {
+  animation: pulse-ring 1.8s ease-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
