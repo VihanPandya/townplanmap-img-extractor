@@ -571,6 +571,8 @@ function ingestRefs(
       isDuplicate: false,
       duplicateOf: null,
       contentHash: null,
+      featureCount: null,
+      geometryWarnings: [],
       variantGroup: variantGroupKey(ref.resolvedUrl),
       belowMinimumSize: false,
       discoveredAt: Date.now(),
@@ -653,10 +655,13 @@ async function verifyOne(run: ScanRun, image: DiscoveredImage): Promise<void> {
   const { record } = run;
   if (stateOf(run) === 'stopping') return;
 
-  const result =
+  // Branch explicitly rather than on a union: only the geographic probe
+  // returns parsed features, and the narrowing needs to be visible.
+  const geoResult =
     image.assetKind === 'geo' && image.geoFormat
       ? await probeGeoFile(image.url, image.geoFormat, image.sourcePage)
-      : await probeImage(image.url, image.sourcePage);
+      : null;
+  const result = geoResult ?? (await probeImage(image.url, image.sourcePage));
   record.progress.verified += 1;
   record.progress.bytesFetched += result.bytesRead;
 
@@ -666,6 +671,14 @@ async function verifyOne(run: ScanRun, image: DiscoveredImage): Promise<void> {
   image.finalUrl = result.finalUrl && result.finalUrl !== image.url ? result.finalUrl : null;
   image.contentHash = result.contentHash;
   if (result.mimeType) image.mimeType = result.mimeType;
+
+  // Geometry read from the same response is kept beside the record, so the
+  // file is never fetched a second time to look at its features.
+  if (geoResult?.parsed) {
+    record.geometry.set(image.id, geoResult.parsed);
+    image.featureCount = geoResult.parsed.features.length;
+    image.geometryWarnings = geoResult.parsed.warnings.slice(0, 4);
+  }
   if (result.fileSize != null) image.fileSize = result.fileSize;
 
   if (result.width && result.height) {

@@ -15,6 +15,8 @@ import { createHash } from 'node:crypto';
 import { imageSize } from 'image-size';
 import { HttpFetchError, safeFetch } from '@/lib/security/http';
 import { UrlSecurityError } from '@/lib/security/url-guard';
+import { parseGeoSource } from '@/lib/geo/parse';
+import type { GeoParseResult } from '@/lib/geo/types';
 import type { GeoFormat, ImageStatus } from '@/lib/types';
 
 /** Bytes that are usually plenty to reach the dimension headers. */
@@ -260,6 +262,8 @@ function sniffGeo(body: Buffer, format: GeoFormat): { ok: boolean; note: string 
 export interface GeoProbeResult extends Omit<ProbeResult, 'width' | 'height'> {
   width: null;
   height: null;
+  /** Geometry parsed from the same response, so the file is fetched once. */
+  parsed: GeoParseResult | null;
 }
 
 /**
@@ -300,6 +304,7 @@ export async function probeGeoFile(url: string, format: GeoFormat, referer?: str
         redirected: response.redirected,
         contentHash: null,
         bytesRead,
+        parsed: null,
         message: describeHttpStatus(response.status),
       };
     }
@@ -318,6 +323,7 @@ export async function probeGeoFile(url: string, format: GeoFormat, referer?: str
         redirected: response.redirected,
         contentHash: null,
         bytesRead,
+        parsed: null,
         message: 'The server returned an HTML page instead of the data file.',
       };
     }
@@ -337,13 +343,27 @@ export async function probeGeoFile(url: string, format: GeoFormat, referer?: str
         redirected: response.redirected,
         contentHash: null,
         bytesRead,
+        parsed: null,
         message: sniffed.note,
       };
     }
 
     const complete = !response.truncated;
+
+    // Geometry is only parsed from a complete body: a truncated file would
+    // yield a partial boundary, which is worse than none at all.
+    let parsed: GeoParseResult | null = null;
+    if (complete) {
+      try {
+        parsed = parseGeoSource(format, response.body, url);
+      } catch {
+        parsed = null;
+      }
+    }
+
     const notes = [
       sniffed.note,
+      parsed && parsed.warnings.length > 0 ? parsed.warnings[0]! : null,
       typeLooksRight ? null : `Served as "${contentType}", which is unusual for ${format.toUpperCase()}.`,
       response.redirected ? `Redirected to ${response.url}` : null,
     ].filter(Boolean);
@@ -359,6 +379,7 @@ export async function probeGeoFile(url: string, format: GeoFormat, referer?: str
       redirected: response.redirected,
       contentHash: complete ? hash.digest('hex') : null,
       bytesRead,
+      parsed,
       message: notes.length > 0 ? notes.join(' ') : null,
     };
   } catch (error) {
@@ -373,6 +394,7 @@ export async function probeGeoFile(url: string, format: GeoFormat, referer?: str
       redirected: false,
       contentHash: null,
       bytesRead,
+      parsed: null,
       message: describeError(error),
     };
   }

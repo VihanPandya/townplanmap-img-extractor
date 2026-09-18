@@ -54,6 +54,7 @@ export async function createScan(input: CreateScanInput): Promise<CreateScanResp
     issues: [],
     images: new Map(),
     idIndex: new Map(),
+    geometry: new Map(),
     seq: 0,
     updatedAt: now,
   };

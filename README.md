@@ -37,8 +37,9 @@ npm run build && npm start     # production
 | `npm run build` / `npm start` | Production build and server |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run lint` | ESLint (flat config); `npm run lint:fix` to autofix |
-| `npm test` | 61 unit + end-to-end tests against a local fixture site |
-| `npm run test:browser` | Browser walkthrough (needs a running server — see below) |
+| `npm test` | 99 unit + end-to-end tests against a local fixture site |
+| `npm run test:browser` | Browser walkthrough of the scanner (needs a running server) |
+| `npm run test:browser:maps` | Browser walkthrough of the map module (needs a running server) |
 
 ---
 
@@ -107,6 +108,76 @@ same-origin stylesheets · `<video poster>` · `<image>` inside inline SVG ·
 Perceptual hashing is deliberately **not** claimed: without decoding image pixels
 server-side it cannot be done honestly, so related-but-different renditions are
 grouped and labelled as variants instead of being silently merged.
+
+---
+
+## City & village map intelligence
+
+A second tab, **Cities & Villages**, turns a completed scan into a browsable set
+of locations, maps and land records:
+
+```
+select location → discover maps → pick a land parcel → inspect →
+export KML → bulk download images + KML + metadata
+```
+
+**Locations are discovered, never pre-loaded.** There is no built-in gazetteer
+anywhere in the codebase. A place appears because its name was read from a KML
+folder, a feature attribute (`village`, `district`, …), a KML document title or
+a URL path segment — and each location records which of those it came from.
+Administrative level is only labelled when the source used a word like
+"district" or "village"; otherwise it reads *level not stated by source*.
+
+**Geometry comes only from real vector data.** KML, KMZ, GeoJSON and GPX are
+parsed into features with their actual coordinates. Every parcel falls into
+exactly one state:
+
+| State | Meaning |
+| --- | --- |
+| `KML available` | Real source geometry; a KML can be generated |
+| `Image only · KML unavailable` | The source published a map image but no coordinates |
+| `Geometry could not be verified` | Coordinates existed but could not be used |
+
+There is no code path that derives a boundary from an image. The type system has
+no value meaning "traced from a picture", `isExportable` refuses anything
+without source geometry, and the per-parcel KML endpoint returns a 404 with the
+reason rather than a fabricated polygon.
+
+**Coordinate systems are transformed, not assumed.** WGS 84 passes through;
+Web Mercator (EPSG:3857, including the 900913 and 102100 aliases) and all 120
+WGS 84 UTM zones are transformed exactly. Anything else is **refused** with an
+explanation, because reprojecting incorrectly would silently move a boundary.
+Transformed features are flagged as such, and coordinates are rounded to the
+precision the source actually offered.
+
+**Areas state their basis.** An area is shown only when the source gave one
+(converted from hectares or acres where the unit is explicit) or when real
+polygon geometry allows it to be computed — and the panel says which.
+
+**Image↔parcel links carry a confidence.** `verified` when the source itself
+ties them together (a KML `GroundOverlay`, or the parcel reference appearing in
+the image URL), `probable` on same-page plus shared wording, `unverified`
+otherwise. Every link shows the reason it was made.
+
+**Image overlays use published bounds only.** A map image is drawn on the
+interactive map solely from a `GroundOverlay` `LatLonBox`. Nothing is aligned by
+eye. The map ships with no basemap and makes no third-party tile requests — it
+says "no basemap configured" rather than quietly sending land-record coordinates
+to a tile provider.
+
+### Exports
+
+| Output | Contents |
+| --- | --- |
+| Per-parcel KML | One `Placemark` with real coordinates, plus provenance and the accuracy notice in its description |
+| Combined KML | One document, `<Folder>` nesting preserving Location → Village → Survey |
+| Individual KMLs | A ZIP of one file per record, with `SKIPPED.txt` naming what had no geometry and why |
+| Full bundle | `<Location>_Map_Data/{Images,KML}/<Village>/…` plus `metadata.json` linking every image, KML and source URL |
+
+KML and metadata are generated from data already retrieved during the scan, so
+they need no further permission. Image *files* are fetched from the source
+website, so that part alone is gated behind the same acknowledgement as the rest
+of the application.
 
 ---
 
@@ -183,6 +254,12 @@ src/
     api/export/              POST csv | json | txt
     api/preview/[id]/        GET guarded image relay (fallback preview only)
     api/download/            POST selected assets as a streamed ZIP archive
+    api/locations/search     POST find locations and survey references
+    api/locations/[id]/      GET dashboard figures · /maps for its records
+    api/maps/[id]/           GET one map · /geometry as GeoJSON · /kml
+    api/parcels/[id]/kml     GET one parcel as KML, or a reasoned refusal
+    api/export/kml           POST combined or one-per-parcel KML
+    api/export/all           POST the organised Images + KML + metadata bundle
   components/                UrlInput, ScanProgress, FilterPanel, SearchBar,
                              ImageGrid, ImageCard, ImageViewer, SelectionToolbar,
                              ExportMenu, ScanHistory, EmptyState, dialogs, ui/
@@ -198,6 +275,9 @@ src/
     database/                ScanStore interface + in-memory implementation
     export/                  CSV / JSON / TXT serialisers
     download/                dependency-free streaming ZIP writer
+    geo/                     KML/KMZ/GeoJSON/GPX parsing, CRS transforms,
+                             KML generation, bounded ZIP reader
+    mapintel/                location hierarchy, parcels, image association
     client/                  typed API client, scan session hook, filter logic
 tests/                       unit, end-to-end and browser suites + fixture site
 ```
@@ -285,6 +365,14 @@ npm run test:browser
 - **Content hashes are only computed for bodies read in full** (up to ~2 MB).
   Larger assets are verified and measured but not hash-deduplicated, and report
   `contentHash: null` rather than a partial digest presented as a full one.
+- **No townplanmap.com-specific adapter exists.** The module reads whatever a
+  scan returns — KML folders, feature attributes, breadcrumb-like URL paths.
+  Writing an adapter tuned to one site's particular URL shapes would require
+  observing that site first; guessing at them would invent structure, which is
+  the one thing this module must not do.
+- **Tiled maps yield imagery, not geometry.** If a site exposes only rendered
+  tiles and no vector data, the records are reported as image-only. No attempt
+  is made to trace boundaries out of tiles.
 - **Scan history is in-memory**, so it does not survive a server restart and is
   not shared between instances. The store interface is where persistence would go.
 - **Downloads are capped** at 500 files, 64 MB per file and 1 GB per archive, and

@@ -10,12 +10,15 @@ import {
   List,
   Moon,
   ScanSearch,
+  MapPinned,
+  ScanLine,
   Settings2,
   SlidersHorizontal,
   Sun,
   X,
 } from 'lucide-react';
 import { DownloadDialog } from '@/components/DownloadDialog';
+import { MapIntelWorkspace } from '@/components/mapintel/MapIntelWorkspace';
 import { EmptyState, GallerySkeleton } from '@/components/EmptyState';
 import { ExportMenu } from '@/components/ExportMenu';
 import { FilterPanel } from '@/components/FilterPanel';
@@ -83,6 +86,7 @@ function Explorer() {
   const [downloadOpen, setDownloadOpen] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [history, setHistory] = useState<ScanSummary[]>([]);
+  const [tab, setTab] = useState<'scanner' | 'places'>('scanner');
 
   const { scan, images, scanId, live, starting, error } = session;
 
@@ -288,6 +292,31 @@ function Explorer() {
             </div>
           </div>
 
+          <nav className="mt-3 flex gap-1" aria-label="Sections">
+            {(
+              [
+                { value: 'scanner', label: 'Website Scanner', icon: <ScanLine size={14} /> },
+                { value: 'places', label: 'Cities & Villages', icon: <MapPinned size={14} /> },
+              ] as const
+            ).map((entry) => (
+              <button
+                key={entry.value}
+                type="button"
+                onClick={() => setTab(entry.value)}
+                aria-current={tab === entry.value ? 'page' : undefined}
+                className={cx(
+                  'flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12.5px] font-medium transition-colors',
+                  tab === entry.value
+                    ? 'bg-[var(--accent-soft)] text-[var(--accent)]'
+                    : 'text-[var(--text-muted)] hover:bg-[var(--panel-inset)] hover:text-[var(--text)]',
+                )}
+              >
+                {entry.icon}
+                {entry.label}
+              </button>
+            ))}
+          </nav>
+
           <div className="mt-3">
             <UrlInput
               value={url}
@@ -303,6 +332,12 @@ function Explorer() {
 
       {/* --------------------------------------------------------- body */}
       <main className="mx-auto max-w-[1600px] px-4 pb-28 sm:px-6">
+        {tab === 'places' ? (
+          <div className="pt-4">
+            <MapIntelWorkspace scanId={scanId} live={live} />
+          </div>
+        ) : (
+          <>
         {scan ? (
           <div className="pt-4">
             <ScanProgress
@@ -490,6 +525,8 @@ function Explorer() {
               )}
             </section>
           </div>
+        )}
+          </>
         )}
       </main>
 

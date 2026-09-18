@@ -72,6 +72,8 @@ const IMAGES = {
   '/img/duplicate-copy.png': pngOfSize(800, 600), // byte-identical to gallery-photo
   '/favicon.ico': pngOfSize(32, 32),
   '/img/village-boundary-map.png': pngOfSize(1400, 1000),
+  '/img/survey-125-2.png': pngOfSize(2048, 1536),
+  '/img/survey-126-1.png': pngOfSize(1024, 768),
   '/img/town-plan-gandhinagar.png': pngOfSize(1200, 900),
 };
 
@@ -132,7 +134,67 @@ function kmz(name) {
   return Buffer.concat([local, entryName, inner, directory, end]);
 }
 
+function villageKml() {
+  return Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2"><Document>
+<name>Ahmedabad district</name>
+<Folder><name>Bopal</name>
+  <Placemark>
+    <name>Survey No. 125/2</name>
+    <description>Agricultural land</description>
+    <ExtendedData>
+      <Data name="village"><value>Bopal</value></Data>
+      <Data name="district"><value>Ahmedabad</value></Data>
+      <Data name="area_hectares"><value>2.34</value></Data>
+    </ExtendedData>
+    <Polygon><outerBoundaryIs><LinearRing><coordinates>
+      72.4500,23.0300,0 72.4520,23.0300,0 72.4520,23.0320,0 72.4500,23.0320,0 72.4500,23.0300,0
+    </coordinates></LinearRing></outerBoundaryIs></Polygon>
+  </Placemark>
+  <Placemark>
+    <name>Survey No. 126/1</name>
+    <ExtendedData><Data name="village"><value>Bopal</value></Data><Data name="district"><value>Ahmedabad</value></Data></ExtendedData>
+    <Polygon><outerBoundaryIs><LinearRing><coordinates>
+      72.4530,23.0300,0 72.4550,23.0300,0 72.4550,23.0320,0 72.4530,23.0320,0 72.4530,23.0300,0
+    </coordinates></LinearRing></outerBoundaryIs></Polygon>
+  </Placemark>
+</Folder>
+<Folder><name>Shela</name>
+  <Placemark>
+    <name>Survey No. 127/4</name>
+    <ExtendedData><Data name="village"><value>Shela</value></Data><Data name="district"><value>Ahmedabad</value></Data></ExtendedData>
+    <Point><coordinates>72.4700,23.0200</coordinates></Point>
+  </Placemark>
+</Folder>
+<GroundOverlay>
+  <name>Bopal scanned sheet</name>
+  <Icon><href>http://GEO_HOST/img/survey-125-2.png</href></Icon>
+  <LatLonBox><north>23.0320</north><south>23.0300</south><east>72.4520</east><west>72.4500</west></LatLonBox>
+</GroundOverlay>
+</Document></kml>`);
+}
+
+/** A projected GeoJSON, so CRS transformation is exercised end to end. */
+function projectedGeoJson() {
+  return Buffer.from(JSON.stringify({
+    type: 'FeatureCollection',
+    crs: { type: 'name', properties: { name: 'urn:ogc:def:crs:EPSG::3857' } },
+    features: [{
+      type: 'Feature',
+      properties: { survey_no: '200/1', village: 'Sanand', district: 'Ahmedabad' },
+      geometry: {
+        type: 'Polygon',
+        coordinates: [[
+          [8065000, 2632000], [8065200, 2632000], [8065200, 2632200], [8065000, 2632200], [8065000, 2632000],
+        ]],
+      },
+    }],
+  }));
+}
+
 const GEO_FILES = {
+  '/data/ahmedabad-district-villages.kml': { body: villageKml(), type: 'application/vnd.google-earth.kml+xml', rewriteHost: true },
+  '/data/sanand-projected.geojson': { body: projectedGeoJson(), type: 'application/geo+json' },
   '/data/ahmedabad-villages.kml': { body: kml('Ahmedabad villages'), type: 'application/vnd.google-earth.kml+xml' },
   '/data/gandhinagar-town-boundary.kml': { body: kml('Gandhinagar town'), type: 'text/xml' },
   '/data/surat-tp-scheme.kmz': { body: kmz('Surat TP scheme'), type: 'application/vnd.google-earth.kmz' },
@@ -172,6 +234,7 @@ const PAGES = {
 <nav>
   <a href="/maps/ahmedabad">Ahmedabad</a>
   <a href="/villages">Villages</a>
+  <a href="/records/ahmedabad">Ahmedabad land records</a>
   <a href="/gallery">Gallery</a>
   <a href="/broken">Broken page</a>
   <a href="/forbidden">Forbidden page</a>
@@ -212,6 +275,17 @@ const PAGES = {
   <li><a href="/brochure.pdf">Brochure (PDF, not geo)</a></li>
 </ul>
 <div data-kml="/data/ahmedabad-villages.kml" class="map-widget">Interactive map</div>
+<a href="/">Home</a>
+</body></html>`,
+
+  '/records/ahmedabad': `<!doctype html><html><head><title>Ahmedabad land records</title></head><body>
+<h1>Ahmedabad district land records</h1>
+<img src="/img/survey-125-2.png" alt="Survey No. 125/2 village map, Bopal">
+<img src="/img/survey-126-1.png" alt="Survey 126/1 parcel map, Bopal">
+<ul>
+  <li><a href="/data/ahmedabad-district-villages.kml">Ahmedabad district villages (KML)</a></li>
+  <li><a href="/data/sanand-projected.geojson">Sanand parcels (projected GeoJSON)</a></li>
+</ul>
 <a href="/">Home</a>
 </body></html>`,
 
@@ -280,8 +354,11 @@ export function startFixtureSite() {
 
     const geo = GEO_FILES[pathname];
     if (geo) {
-      response.writeHead(200, { 'content-type': geo.type, 'content-length': geo.body.length });
-      response.end(geo.body);
+      const payload = geo.rewriteHost
+        ? Buffer.from(geo.body.toString('utf8').replaceAll('GEO_HOST', host), 'utf8')
+        : geo.body;
+      response.writeHead(200, { 'content-type': geo.type, 'content-length': payload.length });
+      response.end(payload);
       return;
     }
 

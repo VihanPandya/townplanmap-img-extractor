@@ -116,6 +116,10 @@ export interface DiscoveredImage {
   assetKind: AssetKind;
   /** Set only when assetKind is 'geo'. */
   geoFormat: GeoFormat | null;
+  /** Features parsed out of a geographic file. Null when it was not parsed. */
+  featureCount: number | null;
+  /** Problems encountered while reading the geometry, shown verbatim. */
+  geometryWarnings: string[];
   /** Canonical, absolute, de-tracked URL used as the identity of the asset. */
   url: string;
   /** The first raw URL seen for this asset, preserved verbatim. */

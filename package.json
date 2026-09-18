@@ -12,7 +12,8 @@
     "test": "node --experimental-strip-types --loader ./tests/alias-loader.mjs --test tests/*.test.ts",
     "test:watch": "node --experimental-strip-types --loader ./tests/alias-loader.mjs --test --watch tests/*.test.ts",
     "test:browser": "node tests/browser.mjs",
-    "lint:fix": "eslint . --fix"
+    "lint:fix": "eslint . --fix",
+    "test:browser:maps": "node tests/browser-mapintel.mjs"
   },
   "dependencies": {
     "cheerio": "^1.2.0",

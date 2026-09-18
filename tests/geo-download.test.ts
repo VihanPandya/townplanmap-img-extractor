@@ -77,15 +77,23 @@ test('geo files are never queued as pages', () => {
 
 test('KML, KMZ and GeoJSON files are discovered from page links', () => {
   const geo = assets.filter((asset) => asset.assetKind === 'geo');
-  const names = geo.map((asset) => asset.filename).sort();
+  const names = new Set(geo.map((asset) => asset.filename));
 
-  assert.deepEqual(names, [
+  // Asserted by containment rather than as an exact list, so adding a fixture
+  // file does not break an unrelated test.
+  for (const expected of [
     'ahmedabad-villages.kml',
     'broken-layer.kml',
     'gandhinagar-town-boundary.kml',
     'surat-tp-scheme.kmz',
     'village-index.geojson',
-  ]);
+  ]) {
+    assert.ok(names.has(expected), `${expected} should have been discovered`);
+  }
+  // Nothing that is not a geographic format may appear in this set.
+  for (const name of names) {
+    assert.match(name, /\.(kml|kmz|geojson|gpx|gml|topojson)$/i, `${name} is not a geographic format`);
+  }
 
   assert.equal(byName('ahmedabad-villages.kml')?.geoFormat, 'kml');
   assert.equal(byName('surat-tp-scheme.kmz')?.geoFormat, 'kmz');

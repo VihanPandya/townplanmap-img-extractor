@@ -10,6 +10,7 @@
  * crawler or the API routes.
  */
 
+import type { GeoParseResult } from '@/lib/geo/types';
 import type {
   CrawledPage,
   DiscoveredImage,
@@ -24,6 +25,8 @@ export interface ScanRecord extends Omit<ScanDetail, 'imageCount' | 'issueCount'
   images: Map<string, DiscoveredImage>;
   /** Image id -> canonical URL, for O(1) lookup by id. */
   idIndex: Map<string, string>;
+  /** Geometry parsed from each geographic asset, keyed by that asset's id. */
+  geometry: Map<string, GeoParseResult>;
   seq: number;
   updatedAt: number;
 }
