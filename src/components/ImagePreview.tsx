@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { FileWarning, ImageOff } from 'lucide-react';
+import { FileWarning, ImageOff, Layers, Map as MapIcon } from 'lucide-react';
 import { previewUrl } from '@/lib/client/api';
 import { cx } from '@/components/ui/primitives';
 import type { DiscoveredImage } from '@/lib/types';
@@ -52,6 +52,33 @@ export function ImagePreview({
     if (image.width && image.height) return `${image.width} / ${image.height}`;
     return undefined;
   }, [image.width, image.height]);
+
+  // A geographic data file has no rendering: showing a labelled tile is honest,
+  // where an <img> would only ever produce a broken-image icon.
+  if (image.assetKind === 'geo') {
+    const usable = image.status === 'available' || image.status === 'redirected';
+    return (
+      <div
+        className={cx(
+          'flex flex-col items-center justify-center gap-1.5 bg-[var(--panel-inset)]',
+          usable ? 'text-[var(--accent)]' : 'text-[var(--text-faint)]',
+          className,
+        )}
+      >
+        {image.geoFormat === 'kmz' || image.geoFormat === 'shapefile-zip' ? (
+          <Layers size={22} />
+        ) : (
+          <MapIcon size={22} />
+        )}
+        <span className="font-mono text-[10px] font-semibold tracking-[0.08em] uppercase">
+          {image.geoFormat ?? 'geo'}
+        </span>
+        <span className="px-2 text-center text-[10px] leading-tight text-[var(--text-faint)]">
+          {usable ? 'Geographic data file' : 'Could not be retrieved'}
+        </span>
+      </div>
+    );
+  }
 
   if (knownBroken && state !== 'direct' && state !== 'relayed') {
     return (

@@ -15,7 +15,7 @@ import { createHash } from 'node:crypto';
 import { imageSize } from 'image-size';
 import { HttpFetchError, safeFetch } from '@/lib/security/http';
 import { UrlSecurityError } from '@/lib/security/url-guard';
-import type { ImageStatus } from '@/lib/types';
+import type { GeoFormat, ImageStatus } from '@/lib/types';
 
 /** Bytes that are usually plenty to reach the dimension headers. */
 const HEADER_PROBE_BYTES = 96 * 1024;
@@ -214,4 +214,166 @@ export function describeError(error: unknown): string {
   if (error instanceof HttpFetchError) return error.message;
   if (error instanceof Error) return error.message;
   return 'The request failed for an unknown reason.';
+}
+
+
+/**
+ * Content types a geographic data file may legitimately arrive as. Many servers
+ * send KML as generic XML, or KMZ as a plain zip, so the check is deliberately
+ * permissive - the extension already told us what we asked for.
+ */
+const GEO_CONTENT_TYPES = [
+  /^application\/vnd\.google-earth/i,
+  /^application\/(geo\+)?json/i,
+  /^application\/(x-)?zip/i,
+  /^application\/(xml|octet-stream|gpx\+xml|gml\+xml)/i,
+  /^text\/(xml|plain|json)/i,
+];
+
+/** Magic bytes, used to confirm what a server actually sent. */
+function sniffGeo(body: Buffer, format: GeoFormat): { ok: boolean; note: string | null } {
+  if (body.length === 0) return { ok: false, note: 'The server returned an empty file.' };
+  const head = body.subarray(0, 512);
+  const isZip = head[0] === 0x50 && head[1] === 0x4b && (head[2] === 0x03 || head[2] === 0x05 || head[2] === 0x07);
+  const text = head.toString('utf8').trimStart();
+
+  if (format === 'kmz' || format === 'shapefile-zip') {
+    return isZip
+      ? { ok: true, note: null }
+      : { ok: false, note: 'The server did not return a zip archive for this file.' };
+  }
+  if (format === 'geojson' || format === 'topojson') {
+    return text.startsWith('{') || text.startsWith('[')
+      ? { ok: true, note: null }
+      : { ok: false, note: 'The response was not JSON.' };
+  }
+  // KML, GPX and GML are all XML documents.
+  if (text.startsWith('<?xml') || text.startsWith('<')) {
+    const expected = format === 'kml' ? /<kml/i : format === 'gpx' ? /<gpx/i : /<[a-z]*:?(FeatureCollection|gml)/i;
+    return expected.test(head.toString('utf8'))
+      ? { ok: true, note: null }
+      : { ok: true, note: `The file is XML but no <${format}> root element was seen in its first bytes.` };
+  }
+  return { ok: false, note: 'The response did not look like a geographic data file.' };
+}
+
+export interface GeoProbeResult extends Omit<ProbeResult, 'width' | 'height'> {
+  width: null;
+  height: null;
+}
+
+/**
+ * Verify a geographic data file. Same guarantees as `probeImage`: only what was
+ * actually observed is reported, and a file that cannot be retrieved says so.
+ */
+export async function probeGeoFile(url: string, format: GeoFormat, referer?: string): Promise<GeoProbeResult> {
+  const hash = createHash('sha256');
+  let bytesRead = 0;
+  let head = Buffer.alloc(0);
+
+  try {
+    const response = await safeFetch(url, {
+      accept: 'application/vnd.google-earth.kml+xml,application/geo+json,application/xml,*/*;q=0.8',
+      ...(referer ? { referer } : {}),
+      limits: { maxBytes: 24 * 1024 * 1024, timeoutMs: 30_000, maxRedirects: 4 },
+      onChunk: (chunk, total) => {
+        bytesRead = total;
+        hash.update(chunk);
+        if (head.length < 512) {
+          head = head.length === 0 ? Buffer.from(chunk) : Buffer.concat([head, chunk]);
+        }
+        return true;
+      },
+    });
+
+    const contentType = normaliseMime(response.contentType);
+
+    if (response.status >= 400) {
+      return {
+        status: 'unavailable',
+        httpStatus: response.status,
+        mimeType: contentType,
+        width: null,
+        height: null,
+        fileSize: null,
+        finalUrl: response.url,
+        redirected: response.redirected,
+        contentHash: null,
+        bytesRead,
+        message: describeHttpStatus(response.status),
+      };
+    }
+
+    // An HTML response here almost always means a login wall or an error page
+    // dressed up as a 200, so it is reported rather than saved as "geo data".
+    if (contentType && /^text\/html/i.test(contentType)) {
+      return {
+        status: 'unsupported',
+        httpStatus: response.status,
+        mimeType: contentType,
+        width: null,
+        height: null,
+        fileSize: response.declaredLength,
+        finalUrl: response.url,
+        redirected: response.redirected,
+        contentHash: null,
+        bytesRead,
+        message: 'The server returned an HTML page instead of the data file.',
+      };
+    }
+
+    const typeLooksRight = !contentType || GEO_CONTENT_TYPES.some((pattern) => pattern.test(contentType));
+    const sniffed = sniffGeo(response.truncated ? head : response.body, format);
+
+    if (!sniffed.ok) {
+      return {
+        status: 'unsupported',
+        httpStatus: response.status,
+        mimeType: contentType,
+        width: null,
+        height: null,
+        fileSize: response.declaredLength,
+        finalUrl: response.url,
+        redirected: response.redirected,
+        contentHash: null,
+        bytesRead,
+        message: sniffed.note,
+      };
+    }
+
+    const complete = !response.truncated;
+    const notes = [
+      sniffed.note,
+      typeLooksRight ? null : `Served as "${contentType}", which is unusual for ${format.toUpperCase()}.`,
+      response.redirected ? `Redirected to ${response.url}` : null,
+    ].filter(Boolean);
+
+    return {
+      status: response.redirected ? 'redirected' : 'available',
+      httpStatus: response.status,
+      mimeType: contentType,
+      width: null,
+      height: null,
+      fileSize: complete ? bytesRead : response.declaredLength,
+      finalUrl: response.url,
+      redirected: response.redirected,
+      contentHash: complete ? hash.digest('hex') : null,
+      bytesRead,
+      message: notes.length > 0 ? notes.join(' ') : null,
+    };
+  } catch (error) {
+    return {
+      status: 'unavailable',
+      httpStatus: error instanceof HttpFetchError ? error.httpStatus : null,
+      mimeType: null,
+      width: null,
+      height: null,
+      fileSize: null,
+      finalUrl: null,
+      redirected: false,
+      contentHash: null,
+      bytesRead,
+      message: describeError(error),
+    };
+  }
 }

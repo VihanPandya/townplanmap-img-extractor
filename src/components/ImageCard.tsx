@@ -20,6 +20,9 @@ export interface ImageCardProps {
 }
 
 function dimensionText(image: DiscoveredImage): string {
+  // Pixel dimensions are meaningless for a data file, so the format is shown
+  // instead of an "unknown size" that would read as a failure.
+  if (image.assetKind === 'geo') return `${(image.geoFormat ?? 'geo').toUpperCase()} data`;
   if (image.width && image.height) return `${image.width} × ${image.height}`;
   const declared = image.references.find((reference) => reference.declaredWidth && reference.declaredHeight);
   if (declared?.declaredWidth && declared.declaredHeight) {

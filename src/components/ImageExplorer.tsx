@@ -5,6 +5,7 @@ import {
   ArrowDownAZ,
   ArrowUpAZ,
   CircleHelp,
+  Download,
   LayoutGrid,
   List,
   Moon,
@@ -14,6 +15,7 @@ import {
   Sun,
   X,
 } from 'lucide-react';
+import { DownloadDialog } from '@/components/DownloadDialog';
 import { EmptyState, GallerySkeleton } from '@/components/EmptyState';
 import { ExportMenu } from '@/components/ExportMenu';
 import { FilterPanel } from '@/components/FilterPanel';
@@ -28,7 +30,7 @@ import { SettingsDialog } from '@/components/SettingsDialog';
 import { UrlInput } from '@/components/UrlInput';
 import { Button, cx, IconButton } from '@/components/ui/primitives';
 import { ToastProvider, useToast } from '@/components/ui/Toast';
-import { ApiRequestError, downloadExport, fetchScanHistory } from '@/lib/client/api';
+import { ApiRequestError, downloadExport, downloadFiles, fetchScanHistory } from '@/lib/client/api';
 import {
   applyFilters,
   EMPTY_FILTERS,
@@ -78,6 +80,8 @@ function Explorer() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [downloadOpen, setDownloadOpen] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [history, setHistory] = useState<ScanSummary[]>([]);
 
   const { scan, images, scanId, live, starting, error } = session;
@@ -183,6 +187,39 @@ function Explorer() {
     [categoryOverrides, scanId, selectedIds, toast, visible],
   );
 
+  // The assets the download dialog will act on: the explicit selection when
+  // there is one, otherwise everything currently visible after filtering.
+  const downloadTargets = useMemo(
+    () => (selectedIds.size > 0 ? images.filter((image) => selectedIds.has(image.id)) : visible),
+    [images, selectedIds, visible],
+  );
+
+  const handleDownload = useCallback(
+    async (basis: string) => {
+      if (!scanId) return;
+      setDownloading(true);
+      try {
+        const filename = await downloadFiles(
+          scanId,
+          downloadTargets.map((image) => image.id),
+          true,
+          basis,
+        );
+        toast.show(`Downloading ${downloadTargets.length} file(s)`, 'success', filename);
+        setDownloadOpen(false);
+      } catch (cause) {
+        toast.show(
+          cause instanceof ApiRequestError ? cause.message : 'The download could not be produced.',
+          'error',
+          cause instanceof ApiRequestError ? (cause.detail ?? undefined) : undefined,
+        );
+      } finally {
+        setDownloading(false);
+      }
+    },
+    [downloadTargets, scanId, toast],
+  );
+
   const openSelected = useCallback(() => {
     const chosen = images.filter((image) => selectedIds.has(image.id)).slice(0, 12);
     if (chosen.length < selectedIds.size) {
@@ -199,6 +236,12 @@ function Explorer() {
       return next;
     });
   }, []);
+
+  // "images" is wrong once geographic data files are in the set.
+  const assetNoun = useMemo(() => {
+    const hasGeo = images.some((image) => image.assetKind === 'geo');
+    return hasGeo ? { one: 'asset', many: 'assets' } : { one: 'image', many: 'images' };
+  }, [images]);
 
   const hiddenBelowMinimum = useMemo(
     () => (filters.showBelowMinimum ? 0 : images.filter((image) => image.belowMinimumSize).length),
@@ -383,6 +426,16 @@ function Explorer() {
                 </Button>
 
                 <ExportMenu onExport={handleExport} busy={exporting} disabled={images.length === 0} size="sm" />
+
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  icon={<Download size={13} />}
+                  disabled={visible.length === 0}
+                  onClick={() => setDownloadOpen(true)}
+                >
+                  Download
+                </Button>
               </div>
 
               {showSkeleton ? (
@@ -406,8 +459,8 @@ function Explorer() {
                 <>
                   <p className="mb-2 text-[12px] text-[var(--text-muted)]">
                     <span className="font-mono tabular-nums">{visible.length}</span> of{' '}
-                    <span className="font-mono tabular-nums">{images.length}</span> unique image
-                    {images.length === 1 ? '' : 's'}
+                    <span className="font-mono tabular-nums">{images.length}</span> unique{' '}
+                    {images.length === 1 ? assetNoun.one : assetNoun.many}
                     {filters.search.trim() ? ` matching “${filters.search.trim()}”` : ''}
                     {live ? ' · still scanning…' : ''}
                     {hiddenBelowMinimum > 0 ? (
@@ -454,7 +507,16 @@ function Explorer() {
         }
         onOpenSelected={openSelected}
         onExport={handleExport}
+        onDownload={() => setDownloadOpen(true)}
         onClear={() => setSelectedIds(new Set())}
+      />
+
+      <DownloadDialog
+        open={downloadOpen}
+        onClose={() => setDownloadOpen(false)}
+        assets={downloadTargets}
+        onConfirm={(basis) => void handleDownload(basis)}
+        busy={downloading}
       />
 
       <ImageViewer

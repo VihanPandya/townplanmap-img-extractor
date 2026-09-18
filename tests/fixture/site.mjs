@@ -7,7 +7,7 @@
  * robots.txt.
  */
 import { createServer } from 'node:http';
-import { gzipSync } from 'node:zlib';
+import { deflateRawSync, gzipSync } from 'node:zlib';
 
 /** Minimal valid images, generated rather than stored as binary fixtures. */
 function pngOfSize(width, height) {
@@ -71,6 +71,77 @@ const IMAGES = {
   '/img/schema-thumb.png': pngOfSize(400, 400),
   '/img/duplicate-copy.png': pngOfSize(800, 600), // byte-identical to gallery-photo
   '/favicon.ico': pngOfSize(32, 32),
+  '/img/village-boundary-map.png': pngOfSize(1400, 1000),
+  '/img/town-plan-gandhinagar.png': pngOfSize(1200, 900),
+};
+
+function kml(name) {
+  return Buffer.from(
+    `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${name}</name>
+<Placemark><name>${name} boundary</name><Point><coordinates>72.5714,23.0225,0</coordinates></Point></Placemark>
+</Document></kml>`,
+  );
+}
+
+/** A real (single-entry, stored) zip so KMZ sniffing is genuinely exercised. */
+function kmz(name) {
+  const inner = kml(name);
+  const entryName = Buffer.from('doc.kml', 'utf8');
+  const table = (() => {
+    const t = new Int32Array(256);
+    for (let n = 0; n < 256; n += 1) {
+      let c = n;
+      for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      t[n] = c;
+    }
+    return t;
+  })();
+  let crc = 0xffffffff;
+  for (const byte of inner) crc = table[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  crc = (crc ^ 0xffffffff) >>> 0;
+
+  const local = Buffer.alloc(30);
+  local.writeUInt32LE(0x04034b50, 0);
+  local.writeUInt16LE(20, 4);
+  local.writeUInt16LE(0, 6);
+  local.writeUInt16LE(0, 8);
+  local.writeUInt32LE(crc, 14);
+  local.writeUInt32LE(inner.length, 18);
+  local.writeUInt32LE(inner.length, 22);
+  local.writeUInt16LE(entryName.length, 26);
+
+  const central = Buffer.alloc(46);
+  central.writeUInt32LE(0x02014b50, 0);
+  central.writeUInt16LE(20, 4);
+  central.writeUInt16LE(20, 6);
+  central.writeUInt32LE(crc, 16);
+  central.writeUInt32LE(inner.length, 20);
+  central.writeUInt32LE(inner.length, 24);
+  central.writeUInt16LE(entryName.length, 28);
+  central.writeUInt32LE(0, 42);
+
+  const directory = Buffer.concat([central, entryName]);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(1, 8);
+  end.writeUInt16LE(1, 10);
+  end.writeUInt32LE(directory.length, 12);
+  end.writeUInt32LE(local.length + entryName.length + inner.length, 16);
+
+  return Buffer.concat([local, entryName, inner, directory, end]);
+}
+
+const GEO_FILES = {
+  '/data/ahmedabad-villages.kml': { body: kml('Ahmedabad villages'), type: 'application/vnd.google-earth.kml+xml' },
+  '/data/gandhinagar-town-boundary.kml': { body: kml('Gandhinagar town'), type: 'text/xml' },
+  '/data/surat-tp-scheme.kmz': { body: kmz('Surat TP scheme'), type: 'application/vnd.google-earth.kmz' },
+  '/data/village-index.geojson': {
+    body: Buffer.from(JSON.stringify({ type: 'FeatureCollection', features: [] })),
+    type: 'application/geo+json',
+  },
+  // Served as an HTML error page despite the .kml name - must be reported, not saved.
+  '/data/broken-layer.kml': { body: Buffer.from('<html><body>Not found</body></html>'), type: 'text/html' },
 };
 
 const PAGES = {
@@ -100,6 +171,7 @@ const PAGES = {
 <video poster="/img/poster-frame.png"></video>
 <nav>
   <a href="/maps/ahmedabad">Ahmedabad</a>
+  <a href="/villages">Villages</a>
   <a href="/gallery">Gallery</a>
   <a href="/broken">Broken page</a>
   <a href="/forbidden">Forbidden page</a>
@@ -124,6 +196,22 @@ const PAGES = {
 <img src="/img/missing-image.png" alt="This one does not exist">
 <img src="/not-really-an-image" alt="Served as text/plain">
 <img src="/img/redirect-to-map" alt="Redirected map">
+<a href="/">Home</a>
+</body></html>`,
+
+  '/villages': `<!doctype html><html><head><title>Village and town boundaries</title></head><body>
+<h1>Village and town boundaries</h1>
+<img src="/img/village-boundary-map.png" alt="Village boundary map for Ahmedabad district">
+<img src="/img/town-plan-gandhinagar.png" alt="Gandhinagar town planning map">
+<ul>
+  <li><a href="/data/ahmedabad-villages.kml">Download Ahmedabad villages (KML)</a></li>
+  <li><a href="/data/gandhinagar-town-boundary.kml">Gandhinagar town boundary KML</a></li>
+  <li><a href="/data/surat-tp-scheme.kmz">Surat TP scheme (KMZ)</a></li>
+  <li><a href="/data/village-index.geojson">Village index GeoJSON</a></li>
+  <li><a href="/data/broken-layer.kml">Broken layer</a></li>
+  <li><a href="/brochure.pdf">Brochure (PDF, not geo)</a></li>
+</ul>
+<div data-kml="/data/ahmedabad-villages.kml" class="map-widget">Interactive map</div>
 <a href="/">Home</a>
 </body></html>`,
 
@@ -161,7 +249,7 @@ export function startFixtureSite() {
     if (pathname === '/sitemap.xml') {
       response.writeHead(200, { 'content-type': 'application/xml' });
       response.end(
-        `<?xml version="1.0"?><urlset><url><loc>http://${host}/gallery</loc></url><url><loc>http://${host}/maps/ahmedabad</loc></url></urlset>`,
+        `<?xml version="1.0"?><urlset><url><loc>http://${host}/gallery</loc></url><url><loc>http://${host}/maps/ahmedabad</loc></url><url><loc>http://${host}/villages</loc></url></urlset>`,
       );
       return;
     }
@@ -187,6 +275,13 @@ export function startFixtureSite() {
     if (pathname === '/styles/site.css') {
       response.writeHead(200, { 'content-type': 'text/css' });
       response.end(CSS);
+      return;
+    }
+
+    const geo = GEO_FILES[pathname];
+    if (geo) {
+      response.writeHead(200, { 'content-type': geo.type, 'content-length': geo.body.length });
+      response.end(geo.body);
       return;
     }
 

@@ -8,7 +8,10 @@
  * The private-host switch is needed only because the fixture site this drives
  * lives on 127.0.0.1. Screenshots land in ./screenshots.
  */
-import { mkdirSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { chromium } from 'playwright';
 import { startFixtureSite } from './fixture/site.mjs';
 
@@ -21,7 +24,7 @@ const browser = await chromium.launch({
   ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}),
   args: ['--no-sandbox'],
 });
-const context = await browser.newContext({ viewport: { width: 1440, height: 950 } });
+const context = await browser.newContext({ viewport: { width: 1440, height: 950 }, acceptDownloads: true });
 const page = await context.newPage();
 page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
 page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
@@ -69,7 +72,7 @@ await step('a scan runs and the gallery fills', async () => {
   const input = page.getByLabel('Website address to scan');
   await input.fill(site.origin);
   await page.getByRole('button', { name: 'Scan website' }).click();
-  await page.getByText(/unique image/).waitFor({ timeout: 30000 });
+  await page.getByText(/unique (image|asset)/).waitFor({ timeout: 30000 });
   await page.waitForFunction(() => document.body.innerText.includes('Finished.'), null, { timeout: 30000 });
 });
 await page.waitForTimeout(1200);
@@ -111,10 +114,10 @@ await step('search filters instantly', async () => {
 
 await step('category filter narrows results', async () => {
   const before = await page.locator('body').innerText();
-  const m = /(\d+) of (\d+) unique image/.exec(before);
+  const m = /(\d+) of (\d+) unique/.exec(before);
   await page.getByText('Map', { exact: true }).first().click();
   await page.waitForTimeout(400);
-  const after = /(\d+) of (\d+) unique image/.exec(await page.locator('body').innerText());
+  const after = /(\d+) of (\d+) unique/.exec(await page.locator('body').innerText());
   if (!m || !after) throw new Error('result counter missing');
   if (Number(after[1]) >= Number(m[1])) throw new Error(`filter did not narrow (${m[1]} -> ${after[1]})`);
   console.log(`      (${m[1]} -> ${after[1]} after filtering to Map)`);
@@ -190,6 +193,96 @@ await step('list and compact views render', async () => {
   await page.screenshot({ path: SHOTS + '/09-compact.png' });
   await page.getByRole('button', { name: 'Grid view' }).click();
   await page.waitForTimeout(400);
+});
+
+await step('KML/KMZ/GeoJSON files are discovered and shown as data tiles', async () => {
+  const body = await page.locator('body').innerText();
+  for (const name of ['ahmedabad-villages.kml', 'surat-tp-scheme.kmz', 'village-index.geojson']) {
+    if (!body.includes(name)) throw new Error('missing geo file: ' + name);
+  }
+  if (!body.toLowerCase().includes('geographic data file')) throw new Error('no geo tile label rendered');
+});
+
+await step('village and town map images are discovered', async () => {
+  const body = await page.locator('body').innerText();
+  for (const name of ['village-boundary-map.png', 'town-plan-gandhinagar.png']) {
+    if (!body.includes(name)) throw new Error('missing map image: ' + name);
+  }
+});
+
+await step('the File kind filter isolates geographic data', async () => {
+  const before = /(\d+) of (\d+) unique/.exec(await page.locator('body').innerText());
+  await page.getByText('Geographic data', { exact: true }).first().click();
+  await page.waitForTimeout(500);
+  const after = /(\d+) of (\d+) unique/.exec(await page.locator('body').innerText());
+  if (!before || !after) throw new Error('result counter missing');
+  if (Number(after[1]) !== 5) throw new Error(`expected 5 geo assets, got ${after[1]}`);
+  console.log(`      (${before[1]} -> ${after[1]} when filtered to Geographic data)`);
+});
+await page.screenshot({ path: SHOTS + '/12-geo-filtered.png' });
+
+await step('a KML viewer reports no pixel dimensions rather than inventing them', async () => {
+  await page.locator('button[aria-label="Inspect ahmedabad-villages.kml"]').first().click();
+  const dialog = page.getByRole('dialog');
+  await dialog.waitFor();
+  const text = await dialog.innerText();
+  if (!/not applicable/i.test(text)) throw new Error('KML should report dimensions as not applicable');
+  if (!text.includes('KML')) throw new Error('format badge missing');
+});
+await page.screenshot({ path: SHOTS + '/13-geo-viewer.png' });
+await page.keyboard.press('Escape');
+await page.waitForTimeout(400);
+
+await step('downloading is gated behind an explicit acknowledgement', async () => {
+  // Drop the selection left over from the export step, so the dialog acts on
+  // the visible geo files rather than one stale card.
+  const clear = page.getByRole('button', { name: 'Clear', exact: true });
+  if (await clear.isVisible().catch(() => false)) {
+    await clear.click();
+    await page.waitForTimeout(300);
+  }
+
+  await page.getByRole('button', { name: 'Download', exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.waitFor();
+  if (await dialog.getByRole('button', { name: /Download ZIP/ }).isEnabled()) {
+    throw new Error('the ZIP button must start disabled');
+  }
+  if (!/does not grant permission/i.test(await dialog.innerText())) {
+    throw new Error('the rights notice is missing');
+  }
+});
+await page.screenshot({ path: SHOTS + '/14-download-dialog.png' });
+
+await step('acknowledging produces a ZIP that system unzip verifies', async () => {
+  const dialog = page.getByRole('dialog');
+  await dialog.locator('label:has(input[type=checkbox])').first().click();
+  await dialog.locator('input[placeholder^="e.g."]').fill('browser test run');
+  await page.waitForTimeout(200);
+
+  const [download] = await Promise.all([
+    page.waitForEvent('download', { timeout: 60000 }),
+    dialog.getByRole('button', { name: /Download ZIP/ }).click(),
+  ]);
+
+  const dir = mkdtempSync(path.join(tmpdir(), 'ui-download-'));
+  try {
+    const archive = path.join(dir, download.suggestedFilename());
+    await download.saveAs(archive);
+    if (!/No errors detected/.test(execFileSync('unzip', ['-t', archive], { encoding: 'utf8' }))) {
+      throw new Error('the archive failed CRC verification');
+    }
+    execFileSync('unzip', ['-q', '-o', archive, '-d', dir]);
+    if (!readFileSync(path.join(dir, 'geo-data/ahmedabad-villages.kml'), 'utf8').includes('<kml')) {
+      throw new Error('the KML did not survive the round trip');
+    }
+    if (!readFileSync(path.join(dir, 'MANIFEST.csv'), 'utf8').includes('browser test run')) {
+      throw new Error('the stated basis was not recorded in the manifest');
+    }
+    console.log('      (' + download.suggestedFilename() + ', manifest records the stated basis)');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 await step('light mode renders results too', async () => {

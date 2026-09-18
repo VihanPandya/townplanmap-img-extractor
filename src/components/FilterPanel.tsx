@@ -13,7 +13,14 @@ import {
   statusLabel,
   type FilterState,
 } from '@/lib/client/filters';
-import type { DiscoveredImage, ImageCategory, ImageStatus, Orientation, SizeBucket } from '@/lib/types';
+import type {
+  AssetKind,
+  DiscoveredImage,
+  ImageCategory,
+  ImageStatus,
+  Orientation,
+  SizeBucket,
+} from '@/lib/types';
 
 function Section({
   title,
@@ -104,6 +111,20 @@ export function FilterPanel({
           </Button>
         ) : null}
       </div>
+
+      {facets.kinds.length > 1 ? (
+        <Section title="File kind">
+          {facets.kinds.map((facet) => (
+            <Checkbox
+              key={facet.value}
+              checked={filters.kinds.includes(facet.value as AssetKind)}
+              onChange={() => toggle('kinds', facet.value as AssetKind)}
+              label={facet.label}
+              count={facet.count}
+            />
+          ))}
+        </Section>
+      ) : null}
 
       <Section title="File type" count={facets.types.length}>
         {facets.types.map((facet) => (

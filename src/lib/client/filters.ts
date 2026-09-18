@@ -7,7 +7,14 @@
  * with a few thousand results.
  */
 
-import type { DiscoveredImage, ImageCategory, ImageStatus, Orientation, SizeBucket } from '@/lib/types';
+import type {
+  AssetKind,
+  DiscoveredImage,
+  ImageCategory,
+  ImageStatus,
+  Orientation,
+  SizeBucket,
+} from '@/lib/types';
 import { tokenize } from '@/lib/utils/text';
 
 export type SortKey = 'discovered' | 'filename' | 'dimensions' | 'filesize' | 'type' | 'sourcePage' | 'category';
@@ -16,6 +23,8 @@ export type ViewMode = 'grid' | 'compact' | 'list';
 
 export interface FilterState {
   search: string;
+  /** Empty means both images and geographic data files. */
+  kinds: AssetKind[];
   /** Lower-cased extensions, e.g. "jpg". Empty means "all". */
   types: string[];
   sizes: SizeBucket[];
@@ -30,6 +39,7 @@ export interface FilterState {
 
 export const EMPTY_FILTERS: FilterState = {
   search: '',
+  kinds: [],
   types: [],
   sizes: [],
   categories: [],
@@ -44,6 +54,7 @@ export const EMPTY_FILTERS: FilterState = {
 export function filtersAreActive(filters: FilterState): boolean {
   return (
     filters.search.trim().length > 0 ||
+    filters.kinds.length > 0 ||
     filters.types.length > 0 ||
     filters.sizes.length > 0 ||
     filters.categories.length > 0 ||
@@ -58,6 +69,7 @@ export function filtersAreActive(filters: FilterState): boolean {
 
 /** The format label shown in facet lists: real extension, or the MIME subtype. */
 export function formatKey(image: DiscoveredImage): string {
+  if (image.assetKind === 'geo' && image.geoFormat) return image.geoFormat;
   if (image.extension) return image.extension === 'jpeg' ? 'jpg' : image.extension;
   if (image.mimeType?.startsWith('image/')) {
     const subtype = image.mimeType.slice(6).replace('svg+xml', 'svg').replace('x-icon', 'ico');
@@ -103,6 +115,7 @@ export function applyFilters(
   selectedIds: ReadonlySet<string>,
 ): DiscoveredImage[] {
   const terms = tokenize(filters.search);
+  const kindSet = new Set(filters.kinds);
   const typeSet = new Set(filters.types);
   const sizeSet = new Set(filters.sizes);
   const categorySet = new Set(filters.categories);
@@ -111,6 +124,7 @@ export function applyFilters(
   const pageSet = new Set(filters.sourcePages);
 
   return images.filter((image) => {
+    if (kindSet.size > 0 && !kindSet.has(image.assetKind)) return false;
     if (!filters.showBelowMinimum && image.belowMinimumSize) return false;
     if (!filters.showDuplicates && image.isDuplicate) return false;
     if (filters.onlySelected && !selectedIds.has(image.id)) return false;
@@ -190,10 +204,12 @@ export function buildFacets(images: DiscoveredImage[], overrides: Record<string,
   const orientations = new Map<Orientation, number>();
   const statuses = new Map<ImageStatus, number>();
   const pages = new Map<string, { count: number; label: string }>();
+  const kinds = new Map<AssetKind, number>();
   let belowMinimum = 0;
   let duplicates = 0;
 
   for (const image of images) {
+    kinds.set(image.assetKind, (kinds.get(image.assetKind) ?? 0) + 1);
     types.set(formatKey(image), (types.get(formatKey(image)) ?? 0) + 1);
     sizes.set(image.sizeBucket, (sizes.get(image.sizeBucket) ?? 0) + 1);
     const category = effectiveCategory(image, overrides);
@@ -220,6 +236,7 @@ export function buildFacets(images: DiscoveredImage[], overrides: Record<string,
       .map(([value, count]) => ({ value, label: label(value), count }));
 
   return {
+    kinds: toFacets(kinds, (value) => (value === 'geo' ? 'Geographic data' : 'Images')),
     types: toFacets(types, (value) => value.toUpperCase()),
     sizes: toFacets(sizes, sizeLabel),
     categories: toFacets(categories, categoryLabel),
@@ -346,6 +363,12 @@ export function discoveryLabel(source: string): string {
       return 'SVG IMAGE';
     case 'input-image':
       return 'INPUT IMAGE';
+    case 'anchor-href':
+      return 'PAGE LINK';
+    case 'data-attribute':
+      return 'DATA ATTR';
+    case 'map-embed':
+      return 'MAP EMBED';
     default:
       return 'META';
   }

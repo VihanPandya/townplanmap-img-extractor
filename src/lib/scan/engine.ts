@@ -23,12 +23,13 @@ import {
   canonicalUrl,
   extensionFromUrl,
   filenameFromUrl,
+  geoFormatFromUrl,
   isSameSite,
   looksLikePage,
   pageLabel,
   resolveUrl,
 } from '@/lib/normalizer/url';
-import { probeImage } from '@/lib/probe/imageProbe';
+import { probeGeoFile, probeImage } from '@/lib/probe/imageProbe';
 import { HttpFetchError, safeFetch } from '@/lib/security/http';
 import { UrlSecurityError, validateTarget } from '@/lib/security/url-guard';
 import { addIssue, addPage, getScanStore, type ScanRecord } from '@/lib/database/store';
@@ -258,10 +259,15 @@ async function execute(run: ScanRun): Promise<void> {
     record.progress.phase = 'done';
     record.progress.fraction = 1;
     record.progress.currentUrl = null;
+    const geoCount = [...record.images.values()].filter((asset) => asset.assetKind === 'geo').length;
+    const haul =
+      geoCount > 0
+        ? `${record.images.size} unique assets (${record.images.size - geoCount} images, ${geoCount} data files)`
+        : `${record.images.size} unique images`;
     record.progress.message =
       record.status === 'stopped'
-        ? `Stopped. ${record.images.size} unique images kept from ${record.progress.pagesScanned} pages.`
-        : `Finished. ${record.images.size} unique images from ${record.progress.pagesScanned} pages.`;
+        ? `Stopped. ${haul} kept from ${record.progress.pagesScanned} pages.`
+        : `Finished. ${haul} from ${record.progress.pagesScanned} pages.`;
     record.finishedAt = Date.now();
     record.updatedAt = Date.now();
     await store.touch(record.id);
@@ -349,8 +355,11 @@ async function crawlOne(
     page.imageRefs = extraction.images.length;
     record.progress.pagesScanned += 1;
 
-    // -------------------------------------------------- record the images
+    // ------------------------------------ record the images and geo files
     ingestRefs(run, extraction.images, response.url, extraction.title, verifyQueue);
+    if (extraction.geo.length > 0) {
+      ingestRefs(run, extraction.geo, response.url, extraction.title, verifyQueue);
+    }
 
     // ------------------------------------------- same-origin stylesheets
     if (settings.followStylesheets && stateOf(run) !== 'stopping') {
@@ -498,29 +507,38 @@ function ingestRefs(
     record.seq += 1;
     const canonical = canonicalUrl(ref.resolvedUrl);
     const id = imageIdFor(record.id, canonical);
-    const extension = extensionFromUrl(ref.resolvedUrl);
-    const width = ref.declaredWidth;
-    const height = ref.declaredHeight;
+    const filename = filenameFromUrl(ref.resolvedUrl);
+    const geoFormat = geoFormatFromUrl(ref.resolvedUrl);
+    const extension = extensionFromUrl(ref.resolvedUrl) ?? fileExtension(filename);
 
-    const classification = classifyImage({
-      url: ref.resolvedUrl,
-      filename: filenameFromUrl(ref.resolvedUrl),
-      extension,
-      mimeType: null,
-      width: null,
-      height: null,
-      altText: ref.altText,
-      title: ref.title,
-      sourceTypes: [ref.sourceType],
-      contextHints: ref.contextHint ? [ref.contextHint] : [],
-      pageUrl: sourcePage,
-      pageTitle,
-      declaredWidth: width,
-      declaredHeight: height,
-    });
+    // A geographic data file needs no heuristic: the format is the fact.
+    const classification = geoFormat
+      ? {
+          category: 'map' as const,
+          confidence: 0.9,
+          reasons: [`${geoFormat.toUpperCase()} geographic data file`],
+        }
+      : classifyImage({
+          url: ref.resolvedUrl,
+          filename,
+          extension,
+          mimeType: null,
+          width: null,
+          height: null,
+          altText: ref.altText,
+          title: ref.title,
+          sourceTypes: [ref.sourceType],
+          contextHints: ref.contextHint ? [ref.contextHint] : [],
+          pageUrl: sourcePage,
+          pageTitle,
+          declaredWidth: ref.declaredWidth,
+          declaredHeight: ref.declaredHeight,
+        });
 
     const image: DiscoveredImage = {
       id,
+      assetKind: geoFormat ? 'geo' : 'image',
+      geoFormat,
       url: ref.resolvedUrl,
       originalUrl: ref.originalUrl,
       canonicalUrl: canonical,
@@ -530,7 +548,7 @@ function ingestRefs(
       references: [reference],
       pageCount: 1,
       referenceCount: 1,
-      filename: filenameFromUrl(ref.resolvedUrl),
+      filename,
       extension,
       mimeType: null,
       width: null,
@@ -635,7 +653,10 @@ async function verifyOne(run: ScanRun, image: DiscoveredImage): Promise<void> {
   const { record } = run;
   if (stateOf(run) === 'stopping') return;
 
-  const result = await probeImage(image.url, image.sourcePage);
+  const result =
+    image.assetKind === 'geo' && image.geoFormat
+      ? await probeGeoFile(image.url, image.geoFormat, image.sourcePage)
+      : await probeImage(image.url, image.sourcePage);
   record.progress.verified += 1;
   record.progress.bytesFetched += result.bytesRead;
 
@@ -654,7 +675,8 @@ async function verifyOne(run: ScanRun, image: DiscoveredImage): Promise<void> {
     image.orientation = orientationOf(result.width, result.height);
     image.sizeBucket = sizeBucketOf(result.width, result.height);
     image.belowMinimumSize =
-      result.width < record.settings.minImageWidth || result.height < record.settings.minImageHeight;
+      image.assetKind === 'image' &&
+      (result.width < record.settings.minImageWidth || result.height < record.settings.minImageHeight);
   }
 
   if (result.status === 'unavailable' && result.message) {
@@ -665,6 +687,14 @@ async function verifyOne(run: ScanRun, image: DiscoveredImage): Promise<void> {
       detail: result.message,
       httpStatus: result.httpStatus,
     });
+  }
+
+  // A geographic file's category came from its format, which verification
+  // cannot change, so only images are re-classified here.
+  if (image.assetKind === 'geo') {
+    record.updatedAt = Date.now();
+    updateFraction(record);
+    return;
   }
 
   // Re-classify now that the real format and dimensions are known.
@@ -690,6 +720,12 @@ async function verifyOne(run: ScanRun, image: DiscoveredImage): Promise<void> {
 
   record.updatedAt = Date.now();
   updateFraction(record);
+}
+
+/** Lower-cased extension of a filename, for formats outside the image list. */
+function fileExtension(filename: string): string | null {
+  const match = /\.([a-z0-9]{2,8})$/i.exec(filename);
+  return match ? match[1]!.toLowerCase() : null;
 }
 
 function countDuplicates(record: ScanRecord): number {

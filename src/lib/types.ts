@@ -20,7 +20,22 @@ export type DiscoverySource =
   | 'video-poster'
   | 'svg-image'
   | 'input-image'
-  | 'meta-other';
+  | 'meta-other'
+  | 'anchor-href'
+  | 'data-attribute'
+  | 'map-embed';
+
+/**
+ * What kind of file an asset is.
+ *
+ * The pipeline (normalise, deduplicate, verify, classify, export, select,
+ * download) is identical for both; only the preview and the verification
+ * content-type check differ.
+ */
+export type AssetKind = 'image' | 'geo';
+
+/** Geographic data formats the scanner recognises. */
+export type GeoFormat = 'kml' | 'kmz' | 'geojson' | 'gpx' | 'gml' | 'shapefile-zip' | 'topojson';
 
 /** Heuristic classification bucket. Never presented as a guaranteed fact. */
 export type ImageCategory =
@@ -97,6 +112,10 @@ export interface ImageReference {
 /** A unique image asset, consolidated from one or more references. */
 export interface DiscoveredImage {
   id: string;
+  /** Image or geographic-data file. Defaults to 'image'. */
+  assetKind: AssetKind;
+  /** Set only when assetKind is 'geo'. */
+  geoFormat: GeoFormat | null;
   /** Canonical, absolute, de-tracked URL used as the identity of the asset. */
   url: string;
   /** The first raw URL seen for this asset, preserved verbatim. */

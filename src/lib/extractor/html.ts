@@ -12,7 +12,7 @@ import { extractCssUrls } from './css';
 import { extractJsonLdImages } from './jsonld';
 import type { PageExtraction, RawImageRef } from './types';
 import { parseSrcset } from '@/lib/normalizer/srcset';
-import { isFetchableUrlCandidate, looksLikePage, resolveUrl } from '@/lib/normalizer/url';
+import { isFetchableUrlCandidate, isGeoUrl, looksLikePage, resolveUrl } from '@/lib/normalizer/url';
 import type { DiscoverySource } from '@/lib/types';
 import { cleanText } from '@/lib/utils/text';
 
@@ -314,6 +314,60 @@ export function extractFromHtml(html: string, pageUrl: string): PageExtraction {
     add($(node).attr('data'), 'meta-other', { elementPath: describeElement($, node) });
   });
 
+  // ------------------------------------------- geographic data files
+  // KML/KMZ and friends are almost always plain anchors ("Download KML"),
+  // never image elements, so links are the primary source here.
+  const geo: RawImageRef[] = [];
+  const geoSeen = new Set<string>();
+  const addGeo = (raw: string | undefined | null, sourceType: DiscoverySource, node?: AnyNode): void => {
+    const value = (raw ?? '').trim();
+    if (!value || !isFetchableUrlCandidate(value)) return;
+    const resolved = resolveUrl(value, baseUrl);
+    if (!resolved || !isGeoUrl(resolved.resolved)) return;
+    // Keyed by discovery method as well as URL, so a file linked both as an
+    // anchor and via a map widget records both ways it was found.
+    const key = `${sourceType}|${resolved.resolved}`;
+    if (geoSeen.has(key)) return;
+    geoSeen.add(key);
+    const label = node ? cleanText($(node).text()) : null;
+    geo.push({
+      originalUrl: resolved.original,
+      resolvedUrl: resolved.resolved,
+      sourceType,
+      isLazyLoaded: false,
+      altText: label,
+      title: node ? cleanText($(node).attr('title')) : null,
+      declaredWidth: null,
+      declaredHeight: null,
+      descriptor: null,
+      elementPath: node ? describeElement($, node) : null,
+      contextHint: node ? contextFor($, node) : null,
+    });
+  };
+
+  $('a[href]').each((_, node) => addGeo($(node).attr('href'), 'anchor-href', node));
+
+  // Map widgets frequently carry the layer file in a data attribute or an
+  // embedded viewer URL rather than in the href itself.
+  for (const attribute of ['data-kml', 'data-file', 'data-layer', 'data-src', 'data-url', 'data-geojson', 'data-map']) {
+    $(`[${attribute}]`).each((_, node) => addGeo($(node).attr(attribute), 'data-attribute', node));
+  }
+  $('iframe[src], embed[src]').each((_, node) => {
+    const src = $(node).attr('src');
+    if (!src) return;
+    addGeo(src, 'map-embed', node);
+    // Google Maps embeds pass the layer file as a query parameter.
+    const resolved = resolveUrl(src, baseUrl);
+    if (!resolved) return;
+    try {
+      for (const value of new URL(resolved.resolved).searchParams.values()) {
+        if (/^https?:\/\//i.test(value)) addGeo(value, 'map-embed', node);
+      }
+    } catch {
+      /* an unparseable embed URL simply yields no layer */
+    }
+  });
+
   // --------------------------------------------------------------- links
   const links: string[] = [];
   const linkSeen = new Set<string>();
@@ -346,6 +400,7 @@ export function extractFromHtml(html: string, pageUrl: string): PageExtraction {
     title: cleanText($('title').first().text()),
     links,
     images,
+    geo,
     stylesheets,
     metaNoFollow: robotsMeta.includes('nofollow') || robotsMeta.includes('none'),
   };

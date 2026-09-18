@@ -1,6 +1,6 @@
 'use client';
 
-import { Copy, ExternalLink, FileDown, X } from 'lucide-react';
+import { Copy, Download, ExternalLink, FileDown, X } from 'lucide-react';
 import { Button } from '@/components/ui/primitives';
 import { ExportMenu } from '@/components/ExportMenu';
 import type { ExportFormat } from '@/lib/types';
@@ -14,6 +14,7 @@ export function SelectionToolbar({
   onCopyUrls,
   onOpenSelected,
   onExport,
+  onDownload,
   onClear,
   exporting,
 }: {
@@ -21,6 +22,7 @@ export function SelectionToolbar({
   onCopyUrls: () => void;
   onOpenSelected: () => void;
   onExport: (format: ExportFormat) => void;
+  onDownload: () => void;
   onClear: () => void;
   exporting: boolean;
 }) {
@@ -46,6 +48,9 @@ export function SelectionToolbar({
           icon={<FileDown size={13} />}
           size="sm"
         />
+        <Button size="sm" variant="primary" icon={<Download size={13} />} onClick={onDownload}>
+          Download files
+        </Button>
         <Button size="sm" variant="ghost" icon={<X size={13} />} onClick={onClear}>
           Clear
         </Button>

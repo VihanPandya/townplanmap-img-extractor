@@ -42,5 +42,20 @@ export async function resolve(specifier, context, nextResolve) {
     }
   }
 
-  return nextResolve(specifier, context);
+  try {
+    return await nextResolve(specifier, context);
+  } catch (error) {
+    // Some packages (Next.js among them) ship extensionless subpaths with no
+    // "exports" map, which bundlers resolve but Node's ESM resolver does not.
+    if (error?.code === 'ERR_MODULE_NOT_FOUND' && !specifier.startsWith('node:')) {
+      for (const extension of EXTENSIONS) {
+        try {
+          return await nextResolve(`${specifier}${extension}`, context);
+        } catch {
+          // try the next extension
+        }
+      }
+    }
+    throw error;
+  }
 }

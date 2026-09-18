@@ -224,7 +224,11 @@ export function ImageViewer({
             </Row>
 
             <Row label="Dimensions">
-              {image.width && image.height ? (
+              {image.assetKind === 'geo' ? (
+                <span className="text-[var(--text-muted)]">
+                  Not applicable — this is a {image.geoFormat?.toUpperCase()} data file, not a raster image.
+                </span>
+              ) : image.width && image.height ? (
                 <span className="font-mono tabular-nums">
                   {image.width} × {image.height}
                   <span className="ml-2 text-[var(--text-muted)]">
@@ -241,7 +245,9 @@ export function ImageViewer({
 
             <Row label="Format">
               <span className="flex flex-wrap items-center gap-2">
-                <Badge>{formatKey(image).toUpperCase()}</Badge>
+                <Badge tone={image.assetKind === 'geo' ? 'accent' : 'neutral'}>
+                  {formatKey(image).toUpperCase()}
+                </Badge>
                 <span className="font-mono text-[12px] text-[var(--text-muted)]">
                   {image.mimeType ?? 'MIME type not reported'}
                 </span>

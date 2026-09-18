@@ -1,10 +1,15 @@
 # TownPlanMap Image Explorer
 
-A website image discovery and asset-inspection tool. Enter a website address; the
+A website asset discovery and inspection tool. Enter a website address; the
 server crawls the pages it is permitted to fetch, extracts every image reference
-it can find in the returned HTML and CSS, verifies which of those references are
-actually retrievable, consolidates duplicates, and presents the result as a
-searchable, filterable gallery.
+and geographic data file it can find in the returned HTML and CSS, verifies which
+of those are actually retrievable, consolidates duplicates, and presents the
+result as a searchable, filterable gallery.
+
+Both raster imagery (village and town plan maps, photos, logos, icons) and the
+geographic data published alongside it (**KML, KMZ, GeoJSON, GPX, GML, zipped
+shapefiles**) travel through the same pipeline, and either can be exported as
+metadata or downloaded as a ZIP archive.
 
 It ships pointed at `https://townplanmap.com`, but the target is editable and the
 application is entirely dynamic — no image URLs, filenames, counts or categories
@@ -32,7 +37,7 @@ npm run build && npm start     # production
 | `npm run build` / `npm start` | Production build and server |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run lint` | ESLint (flat config); `npm run lint:fix` to autofix |
-| `npm test` | 45 unit + end-to-end tests against a local fixture site |
+| `npm test` | 61 unit + end-to-end tests against a local fixture site |
 | `npm run test:browser` | Browser walkthrough (needs a running server — see below) |
 
 ---
@@ -69,6 +74,18 @@ npm run build && npm start     # production
 Results stream to the browser while the crawl is still running: the client polls
 with a cursor and receives only assets discovered since its last request.
 
+### Where geographic data files are found
+
+KML and KMZ are almost never image elements: they are plain "Download KML"
+anchors, map-widget data attributes (`data-kml`, `data-layer`, `data-geojson`)
+or layer URLs passed as query parameters to an embedded map viewer. All three
+are covered. A file is only treated as geographic data when its extension says
+so, so an ordinary `.zip` is left alone while `boundaries-shp.zip` is not.
+
+Geographic files are verified by content, not just by name: a KMZ must really be
+a zip, a GeoJSON must really be JSON, and a `.kml` that turns out to be an HTML
+error page is reported as `Unsupported` rather than quietly accepted.
+
 ### Where images are found
 
 `<img src>` · `srcset` candidates · `<picture><source>` · lazy-loading attributes
@@ -102,9 +119,12 @@ These are the constraints that shaped the implementation, not aspirations:
   reported when they were read from the image's own bytes.
 - **Categories are labelled "detected", with their reasoning shown**, and the user
   can override any of them. Overrides flow through to exports.
-- **Exports contain references and metadata only.** Image bytes are never bundled
-  into a download; discovering a publicly reachable image grants no right to
-  redistribute it.
+- **Exports contain references and metadata only.** The separate *download*
+  action is the one path that retrieves file contents, and it is opt-in: it
+  refuses to run without an explicit statement that you have the right to
+  retrieve the files, and records that statement in the archive's manifest
+  alongside every file's source URL. Discovering a publicly reachable file
+  grants no right to redistribute it.
 - **No JavaScript from scanned pages is executed**, on the server or in the client.
   Client-rendered images are therefore genuinely out of reach, and the tool does
   not pretend otherwise.
@@ -133,6 +153,8 @@ sitemaps and the preview relay — goes through one guarded fetcher
 | Slowloris / hanging hosts | Connect, headers, body and whole-request timeouts |
 | Malicious HTML | Parsed into an inert DOM; no scripts, no styles resolved, no subresource loads |
 | Open image proxy | The preview relay accepts only ids already present in a stored scan — never a caller-supplied URL — and returns image content types with `nosniff` |
+| Bulk download abuse | The download route likewise fetches only ids from a stored scan, requires an explicit acknowledgement, and caps file count, per-file size and total archive size |
+| Zip-slip on extraction | Archive entry names keep only the final path segment, with traversal, absolute paths, control characters and reserved characters stripped |
 
 ### The one escape hatch
 
@@ -160,6 +182,7 @@ src/
     api/image/[id]/          GET one asset with every reference
     api/export/              POST csv | json | txt
     api/preview/[id]/        GET guarded image relay (fallback preview only)
+    api/download/            POST selected assets as a streamed ZIP archive
   components/                UrlInput, ScanProgress, FilterPanel, SearchBar,
                              ImageGrid, ImageCard, ImageViewer, SelectionToolbar,
                              ExportMenu, ScanHistory, EmptyState, dialogs, ui/
@@ -174,6 +197,7 @@ src/
     scan/                    the engine that ties it together
     database/                ScanStore interface + in-memory implementation
     export/                  CSV / JSON / TXT serialisers
+    download/                dependency-free streaming ZIP writer
     client/                  typed API client, scan session hook, filter logic
 tests/                       unit, end-to-end and browser suites + fixture site
 ```
@@ -228,8 +252,12 @@ variant set, a byte-identical duplicate under a second name, a 404 image, a 403
 page, a redirect, an image served as `text/plain`, a gzipped HTML response, a
 robots.txt disallow, an external host and a sitemap.
 
+The ZIP writer is validated by extracting its output with the system `unzip`,
+including a CRC check (`unzip -t`), rather than by the code that wrote it.
+
 Coverage includes: IPv4/IPv6/hostname SSRF classification, protocol and port
-rejection, `srcset` parsing (including commas inside URLs), URL resolution and
+rejection, geographic format detection, KML/KMZ/GeoJSON discovery and content
+verification, zip-slip resistance, the download acknowledgement gate, `srcset` parsing (including commas inside URLs), URL resolution and
 canonicalisation, robots.txt group selection and wildcard/anchor matching, CSS
 and JSON-LD extraction, variant grouping, the full scan pipeline, verification
 statuses, content-hash deduplication, crawl limits and clamping, stop-preserves-
@@ -237,8 +265,9 @@ results, cursor paging, and CSV/JSON/TXT export shape and quoting.
 
 `npm run test:browser` additionally drives the finished UI in Chromium — scan,
 progress dashboard, search, filters, viewer, category override, selection, CSV
-download, all three view modes, both themes and a 390 px mobile viewport —
-and asserts no console errors. It needs a running server:
+download, KML/KMZ discovery, the file-kind filter, the download acknowledgement
+gate and a real ZIP round trip, all three view modes, both themes and a 390 px
+mobile viewport — and asserts no console errors. It needs a running server:
 
 ```bash
 npm run build
@@ -258,3 +287,7 @@ npm run test:browser
   `contentHash: null` rather than a partial digest presented as a full one.
 - **Scan history is in-memory**, so it does not survive a server restart and is
   not shared between instances. The store interface is where persistence would go.
+- **Downloads are capped** at 500 files, 64 MB per file and 1 GB per archive, and
+  the archive is stored (not deflated) since image data is already compressed.
+  Assets that failed verification are never re-attempted; they are listed in the
+  manifest as skipped, with the reason.

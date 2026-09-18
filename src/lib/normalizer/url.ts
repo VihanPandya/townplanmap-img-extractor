@@ -1,3 +1,5 @@
+import type { GeoFormat } from '@/lib/types';
+
 /**
  * URL resolution and canonicalisation.
  *
@@ -241,6 +243,41 @@ export function pageLabel(input: string): string {
   }
 }
 
+/**
+ * Geographic data formats, mapped from their file extension.
+ *
+ * These are not images, but they are exactly the artefact a town-planning site
+ * publishes alongside its map imagery, so they travel through the same
+ * discovery pipeline.
+ */
+const GEO_EXTENSIONS: Record<string, GeoFormat> = {
+  kml: 'kml',
+  kmz: 'kmz',
+  geojson: 'geojson',
+  gpx: 'gpx',
+  gml: 'gml',
+  topojson: 'topojson',
+};
+
+/** Geographic format implied by a URL's path, or null when it is not one. */
+export function geoFormatFromUrl(input: string): GeoFormat | null {
+  const filename = filenameFromUrl(input);
+  const match = /\.([a-z0-9]{2,8})$/i.exec(filename);
+  if (!match) return null;
+  const extension = match[1]!.toLowerCase();
+  const direct = GEO_EXTENSIONS[extension];
+  if (direct) return direct;
+  // A zipped shapefile is conventionally named "<something>-shp.zip" or "shapefile.zip".
+  if (extension === 'zip' && /(^|[-_.])(shp|shape|shapefile|gis)([-_.]|$)/i.test(filename)) {
+    return 'shapefile-zip';
+  }
+  return null;
+}
+
+export function isGeoUrl(input: string): boolean {
+  return geoFormatFromUrl(input) !== null;
+}
+
 /** File extensions that are certainly not HTML pages, so they are never queued as pages. */
 const NON_PAGE_EXTENSIONS = new Set([
   'jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'avif', 'bmp', 'ico', 'tif', 'tiff', 'heic',
@@ -248,12 +285,16 @@ const NON_PAGE_EXTENSIONS = new Set([
   'mp3', 'mp4', 'avi', 'mov', 'wmv', 'webm', 'ogg', 'wav', 'flac', 'm4a', 'mkv',
   'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'csv', 'rtf',
   'css', 'js', 'mjs', 'json', 'xml', 'rss', 'atom', 'woff', 'woff2', 'ttf', 'eot', 'map',
+  // Geographic data files: discovered as assets, never crawled as pages.
+  'kml', 'kmz', 'geojson', 'gpx', 'gml', 'topojson',
 ]);
 
 export function looksLikePage(input: string): boolean {
   try {
     const url = new URL(input);
-    const match = /\.([a-z0-9]{1,6})$/i.exec(url.pathname);
+    // Up to 8 characters so longer data extensions ("geojson", "topojson")
+    // are recognised rather than falling through as if they were pages.
+    const match = /\.([a-z0-9]{1,8})$/i.exec(url.pathname);
     if (!match) return true;
     return !NON_PAGE_EXTENSIONS.has(match[1]!.toLowerCase());
   } catch {

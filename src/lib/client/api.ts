@@ -142,6 +142,47 @@ export async function downloadExport(
   return filename;
 }
 
+/**
+ * Retrieve the selected assets as a ZIP.
+ *
+ * `acknowledged` is required by the server: the caller states they have the
+ * right to retrieve these files, and that statement is recorded in the
+ * archive's manifest.
+ */
+export async function downloadFiles(
+  scanId: string,
+  imageIds: string[] | null,
+  acknowledged: boolean,
+  basis?: string,
+): Promise<string> {
+  const response = await fetch('/api/download', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      scanId,
+      acknowledged,
+      ...(basis ? { basis } : {}),
+      ...(imageIds && imageIds.length > 0 ? { imageIds } : {}),
+    }),
+  });
+  if (!response.ok) await readError(response);
+
+  const blob = await response.blob();
+  const disposition = response.headers.get('content-disposition') ?? '';
+  const match = /filename="([^"]+)"/.exec(disposition);
+  const filename = match?.[1] ?? 'assets.zip';
+
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = objectUrl;
+  anchor.download = filename;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+  return filename;
+}
+
 /** The server-side relay, used only when a direct <img> load fails. */
 export function previewUrl(image: DiscoveredImage, scanId: string): string {
   return `/api/preview/${encodeURIComponent(image.id)}?scanId=${encodeURIComponent(scanId)}`;

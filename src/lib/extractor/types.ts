@@ -23,6 +23,8 @@ export interface PageExtraction {
   /** Same-document links, already absolute and fragment-free. */
   links: string[];
   images: RawImageRef[];
+  /** Geographic data files (KML, KMZ, GeoJSON, GPX, ...) linked from the page. */
+  geo: RawImageRef[];
   /** Absolute URLs of linked stylesheets, for optional background-image scanning. */
   stylesheets: string[];
   /** True when the document told us not to index/follow. */
